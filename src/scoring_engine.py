@@ -1,82 +1,118 @@
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class RoundScore:
+    round_num: int = 1
+    our_landed: int = 0
+    our_significant: int = 0
+    opponent_landed: int = 0
+    opponent_significant: int = 0
+    knockdowns_scored: int = 0
+    knockdowns_conceded: int = 0
+    aggression_score: float = 0.0
+    control_time: float = 0.0
+    round_grade: str = "10-9"
+
+
+@dataclass
+class MatchScore:
+    rounds: list = field(default_factory=list)
+    total_our: int = 0
+    total_opponent: int = 0
+    winner: str = ""
+    method: str = "decision"
+
+
 class ScoringEngine:
-    def __init__(self):
+    def __init__(self, rounds=3, round_duration=180):
+        self.total_rounds = rounds
+        self.round_duration = round_duration
+        self.round_scores = []
         self.reset_round()
 
     def reset_round(self, round_num=1):
         self.round_num = round_num
-        self.effective_striking = {"fighter_a": 0, "fighter_b": 0}
-        self.grappling_control = {"fighter_a": 0, "fighter_b": 0}
-        self.aggression = {"fighter_a": 0, "fighter_b": 0}
-        self.cage_control = {"fighter_a": 0, "fighter_b": 0}
-        self.takedowns = {"fighter_a": 0, "fighter_b": 0}
-        self.knockdowns = {"fighter_a": 0, "fighter_b": 0}
-        self.significant_strikes = {"fighter_a": 0, "fighter_b": 0}
-        self.total_strikes = {"fighter_a": 0, "fighter_b": 0}
-        self.defense_rating = {"fighter_a": 0, "fighter_b": 0}
+        self.our_strikes_landed = 0
+        self.our_significant_strikes = 0
+        self.opponent_strikes_landed = 0
+        self.opponent_significant_strikes = 0
+        self.knockdowns_scored = 0
+        self.knockdowns_conceded = 0
+        self.aggression_score = 0.0
+        self.control_time = 0.0
+        self.frame_count = 0
 
-    def score_round(self, strike_data, movement_data, knockdowns=None):
-        result = {
-            "round": self.round_num,
-            "scores": {},
-            "winner": None,
-            "analysis": [],
-        }
+    def update(self, strike_result, movement, referee):
+        self.frame_count += 1
+        if strike_result:
+            self.our_strikes_landed += strike_result.get("total_landed", 0)
+            strike_counts = strike_result.get("strike_counts", {}) or {}
+            self.our_significant_strikes += sum(
+                v for k, v in strike_counts.items()
+                if k in ("cross", "rear_hook", "rear_uppercut", "roundhouse", "knee")
+            )
+        if movement:
+            pressure = getattr(movement, "forward_pressure", 0) if not isinstance(movement, dict) else movement.get("forward_pressure", 0)
+            self.aggression_score = max(self.aggression_score, abs(pressure))
+        if referee:
+            if getattr(referee, "knockdown_detected", False):
+                self.knockdowns_scored += 1
+            if getattr(referee, "stalling_warning", False):
+                self.aggression_score = max(self.aggression_score - 0.5, 0)
 
-        effective_striking_a = strike_data.get("total_landed", 0) if strike_data else 0
-        effective_striking_b = 0
-        result["significant_strikes"] = {
-            "fighter_a": effective_striking_a,
-            "fighter_b": effective_striking_b,
-        }
-
-        stance_a = movement_data.get("stance", "unknown") if movement_data else "unknown"
-        forward_pressure_a = movement_data.get("forward_pressure", 0) if movement_data else 0
-        head_movement_a = movement_data.get("head_movement", 0) if movement_data else 0
-
-        self.aggression = {"fighter_a": min(forward_pressure_a * 5, 10), "fighter_b": 0}
-
-        striking_score_a = min(effective_striking_a, 10)
-        striking_score_b = 0
-
-        result["scores"]["fighter_a"] = {
-            "effective_striking": round(striking_score_a, 1),
-            "aggression": round(self.aggression["fighter_a"], 1),
-            "total": round(striking_score_a + self.aggression["fighter_a"], 1),
-        }
-        result["scores"]["fighter_b"] = {
-            "effective_striking": round(striking_score_b, 1),
-            "aggression": round(self.aggression["fighter_b"], 1),
-            "total": round(striking_score_b + self.aggression["fighter_b"], 1),
-        }
-
-        total_a = result["scores"]["fighter_a"]["total"]
-        total_b = result["scores"]["fighter_b"]["total"]
-
-        if total_a > total_b + 2:
-            result["winner"] = "fighter_a"
-            result["analysis"].append(f"Fighter A clearly wins round {self.round_num} "
-                                      f"({total_a:.0f}-{total_b:.0f})")
-        elif total_a > total_b:
-            result["winner"] = "fighter_a"
-            result["analysis"].append(f"Fighter A edges round {self.round_num} "
-                                      f"({total_a:.0f}-{total_b:.0f})")
+    def score_round(self, round_num: int) -> RoundScore:
+        effective_score = min(self.our_significant_strikes + self.our_strikes_landed * 0.3, 15)
+        defense_factor = max(0, 10 - min(self.knockdowns_conceded * 3, 10))
+        aggression = min(self.aggression_score * 2, 5)
+        total = effective_score * 0.5 + defense_factor + aggression
+        if self.knockdowns_scored > 0:
+            total += 2
+        if total >= 12:
+            grade = "10-9"
+        elif total >= 10:
+            grade = "10-9"
         else:
-            result["winner"] = "draw"
-            result["analysis"].append(f"Round {self.round_num} is close ({total_a:.0f}-{total_b:.0f})")
+            grade = "9-9"
+        if self.knockdowns_scored >= 3:
+            grade = "10-8"
+        if self.knockdowns_conceded >= 3:
+            grade = "8-10"
 
-        if stance_a:
-            result["analysis"].append(f"Fighter A fighting from {stance_a} stance")
+        score = RoundScore(
+            round_num=round_num,
+            our_landed=self.our_strikes_landed,
+            our_significant=self.our_significant_strikes,
+            opponent_landed=self.opponent_strikes_landed,
+            opponent_significant=self.opponent_significant_strikes,
+            knockdowns_scored=self.knockdowns_scored,
+            knockdowns_conceded=self.knockdowns_conceded,
+            aggression_score=round(self.aggression_score, 1),
+            control_time=round(self.control_time, 1),
+            round_grade=grade,
+        )
+        self.round_scores.append(score)
+        return score
 
-        return result
-
-    def get_round_summary(self):
-        return {
-            "round": self.round_num,
-            "total_strikes": self.total_strikes,
-            "significant_strikes": self.significant_strikes,
-            "takedowns": self.takedowns,
-            "knockdowns": self.knockdowns,
-        }
+    def score_match(self) -> MatchScore:
+        total_our = sum(r.our_landed for r in self.round_scores) if self.round_scores else self.our_strikes_landed
+        total_opponent = sum(r.opponent_landed for r in self.round_scores) if self.round_scores else 0
+        rounds_won = sum(1 for r in self.round_scores if int(r.round_grade.split("-")[0]) > int(r.round_grade.split("-")[1])) if self.round_scores else 0
+        rounds_lost = sum(1 for r in self.round_scores if int(r.round_grade.split("-")[0]) < int(r.round_grade.split("-")[1])) if self.round_scores else 0
+        if rounds_won > rounds_lost:
+            winner = "us"
+        elif rounds_lost > rounds_won:
+            winner = "opponent"
+        else:
+            winner = "draw"
+        return MatchScore(
+            rounds=list(self.round_scores),
+            total_our=total_our,
+            total_opponent=total_opponent,
+            winner=winner,
+            method="decision",
+        )
 
 
 class MatchManager:
@@ -96,8 +132,8 @@ class MatchManager:
         self.round_scores.append(score_data)
 
     def get_match_result(self):
-        a_wins = sum(1 for r in self.round_scores if r.get("winner") == "fighter_a")
-        b_wins = sum(1 for r in self.round_scores if r.get("winner") == "fighter_b")
+        a_wins = sum(1 for r in self.round_scores if getattr(r, "winner", None) == "fighter_a" or (isinstance(r, dict) and r.get("winner") == "fighter_a"))
+        b_wins = sum(1 for r in self.round_scores if getattr(r, "winner", None) == "fighter_b" or (isinstance(r, dict) and r.get("winner") == "fighter_b"))
 
         if a_wins > b_wins:
             self.match_winner = "fighter_a"

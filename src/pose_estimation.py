@@ -1,6 +1,18 @@
 import cv2
 import numpy as np
 import mediapipe as mp
+import time
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+
+@dataclass
+class PoseResult:
+    landmarks: Optional[np.ndarray]
+    timestamp: float
+    frame_width: int
+    frame_height: int
+    has_detection: bool
 
 
 LANDMARK_INDICES = {
@@ -36,12 +48,25 @@ class PoseEstimator:
         self.mp_draw = mp.solutions.drawing_utils
         self.mp_draw_styles = mp.solutions.drawing_styles
 
-    def process_frame(self, frame):
+    def process_frame(self, frame: np.ndarray) -> Tuple[PoseResult, any]:
+        h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
-        result = self.pose.process(rgb)
+        mp_result = self.pose.process(rgb)
         rgb.flags.writeable = True
-        return result
+        landmarks_arr = None
+        has_detection = False
+        if mp_result and mp_result.pose_landmarks:
+            has_detection = True
+            landmarks_arr = self.landmarks_to_array(mp_result.pose_landmarks, (h, w))
+        pose_result = PoseResult(
+            landmarks=landmarks_arr,
+            timestamp=time.time(),
+            frame_width=w,
+            frame_height=h,
+            has_detection=has_detection,
+        )
+        return pose_result, mp_result
 
     def draw_landmarks(self, frame, landmarks):
         if landmarks:
@@ -60,6 +85,11 @@ class PoseEstimator:
         for i, lm in enumerate(landmarks.landmark):
             arr[i] = [lm.x * w, lm.y * h, lm.visibility]
         return arr
+
+    def get_keypoint(self, landmarks, idx: int) -> Optional[Tuple[float, float, float]]:
+        if landmarks is None or idx >= len(landmarks):
+            return None
+        return (float(landmarks[idx][0]), float(landmarks[idx][1]), float(landmarks[idx][2]))
 
     def close(self):
         self.pose.close()
