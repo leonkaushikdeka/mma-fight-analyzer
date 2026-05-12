@@ -1,82 +1,68 @@
 # MMA Fight Analyzer
 
-Real-time pose-based MMA analysis with strike detection, referee AI, and coaching suggestions. **100% offline** — no cloud, no API keys, no internet required.
+Real-time pose-based MMA analysis with strike detection, referee AI, takedown detection, automated round management, coaching suggestions, and CSV export. **100% offline** — no cloud, no API keys, no internet.
 
-Uses [MediaPipe Pose](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker) for 33-point body tracking and geometric heuristics for strike classification, knockdown detection, and movement analysis. Runs on CPU or GPU.
+## Features
+
+| Module | What it does |
+|--------|-------------|
+| **Multi-Person Pose** | MediaPipe PoseLandmarker tracking up to 2 fighters with color-coded skeletons |
+| **Strike Detection** | Per-limb buffered velocity analysis: jab, cross, hooks, uppercuts, kicks, knees |
+| **Movement Analysis** | Stance (orthodox/southpaw), guard quality, forward pressure, head movement — all body-scale normalized |
+| **Takedown & Clinch** | Level-change detection, hip drive analysis, clinch proximity, ground control time |
+| **Referee AI** | State machine: knockdown → standup → stalling warnings, illegal strike monitoring |
+| **Coaching Engine** | Real-time tips: guard position, head movement, strike variety, pressure |
+| **Scoring** | MMA criteria: effective striking, aggression, round scoring |
+| **Round Manager** | Auto 3x5-min rounds with rest periods, bell/horn cues, match-over detection |
+| **CSV Export** | Timestamped event log: strikes, knockdowns, takedowns, round scores — exported automatically |
+| **Video Analysis** | Progress bar, total frame count, per-round breakdown for fight replays |
 
 ## How It Works
 
 ```
-Camera frame
+Camera / Video File
     │
     ▼
-MediaPipe Pose (33 landmarks) ─── body scale computed per frame
+MediaPipe PoseLandmarker (up to 2 fighters, 33 landmarks each)
     │
-    ├──► Movement Analyzer   stance (orthodox/southpaw), guard height,
-    │                         forward pressure, head movement, footwork
-    │                         ── all normalized by shoulder width
-    │
-    ├──► Strike Detector     separate limb buffers per side, smoothed
-    │                         velocity over N-frame window, trajectory
-    │                         classification (forward/lateral/upward),
-    │                         elbow angle checks, body-scale thresholds
-    │
-    ├──► Referee AI          state machine: STANDING → KNOCKED_DOWN →
-    │                         GETTING_UP → STANDING, body-relative
-    │                         height drop detection, stalling monitor
-    │
-    ├──► Scoring Engine      MMA criteria: effective striking, aggression
-    │
-    └──► Suggestion Engine   pattern-based coaching: guard, pressure,
-                              strike variety, head movement, feinting
+    ├──► Movement Analyzer    body-scale normalized metrics
+    ├──► Strike Detector      per-limb buffers, N-frame window velocity
+    ├──► Takedown Detector    hip drop ratio → phase machine
+    ├──► Referee AI           knockdown/standup/stalling state machine
+    ├──► Round Manager        5-min rounds, 1-min rest, auto-progression
+    ├──► Suggestion Engine    pattern-based coaching
+    └──► Export Manager       CSV with all events
     │
     ▼
-    OpenCV HUD (metrics panel + pose skeleton overlay)
+OpenCV HUD: metrics panel + skeletons + round timer + progress bar
 ```
-
-### Body-Scale Normalization
-
-All thresholds are computed relative to the person's shoulder width per frame. This means:
-
-- Detection works the same at 480p, 720p, or 1080p
-- Camera distance changes don't break thresholds
-- A child and an adult are treated proportionally
 
 ### Strike Detection Approach
 
-| Step | What happens |
-|------|-------------|
-| 1 | Each wrist/ankle has its own FIFO buffer of recent positions |
-| 2 | Velocity = position(t) - position(t-N) / time, where N = 2-3 frames |
-| 3 | Movement vector dot product with shoulder-to-wrist direction = alignment score |
-| 4 | Forward punch with alignment > 0.6 + elbow angle > 120° = jab/cross |
-| 5 | Lateral movement with speed > 3.5x body scale = hook |
-| 6 | Upward movement with elbow angle < 100° = uppercut |
-| 7 | Leg velocity check + knee angle for kicks/knees |
+- Each wrist/ankle has its own FIFO buffer of recent positions
+- Velocity = `position(t) - position(t-N) / time` (N=2-3 frame window for smoothing)
+- Movement vector dot product with shoulder-to-wrist direction = alignment score
+- Classified by trajectory (forward/lateral/upward) + elbow/knee angle checks
+- All thresholds normalized by shoulder width per frame (resolution-independent)
 
 ### Referee AI State Machine
 
 ```
-            ┌───────────────────────────────────────┐
-            │                                       │
-            ▼                                       │
-  ┌─────────────────┐    nose drops >25%      ┌──────────┐
-  │    STANDING     │ ──────────────────────► │ KNOCKED  │
-  │  (normal ops)   │                         │  DOWN    │
-  └─────────────────┘ ◄────────────────────── └──────────┘
-            │  back to feet     hip rises >15%      │
-            │                                        │
-            │  no strikes for 5s                     │
-            ├────────────────────────────────────────► STALLING
-            │                                        │
-            ▼                                        ▼
-     throws a strike                            standup
+STANDING → (nose drops >25%) → KNOCKED_DOWN → (hip rises >15%) → GETTING_UP → (nose near shoulder) → STANDING
+STANDING → (no strikes for 5s) → STALLING → (strike thrown) → STANDING
+```
+
+### Takedown Detection
+
+```
+STANDING → (hip drops >25% + opponent close) → SHOOTING → (hip drops >45%) → TAKEDOWN → GROUND
+STANDING → (opponent close + hip drop >10%) → CLINCH
 ```
 
 ## Requirements
 
 - Python 3.9+
-- Webcam or video file
+- Webcam (for live) or video file (for replay analysis)
 - No internet during runtime
 
 ## Install
@@ -85,25 +71,31 @@ All thresholds are computed relative to the person's shoulder width per frame. T
 git clone https://github.com/leonkaushikdeka/mma-fight-analyzer.git
 cd mma-fight-analyzer
 pip install -r requirements.txt
+
+# MediaPipe model downloads automatically on first run
+python main.py
 ```
 
 ## Usage
 
 ```bash
-# Webcam (default)
+# Webcam (default, single fighter)
 python main.py
 
-# Video file
+# Webcam with 2-fighter multi-pose tracking
+python main.py --complexity 1
+
+# Analyze a pre-recorded fight video
 python main.py --source path/to/fight.mp4
 
-# Performance mode: process every 2nd frame (skip=1)
+# Performance mode (process every 2nd frame)
 python main.py --skip 1
 
-# Max accuracy: full model + no frame skipping
-python main.py --complexity 2
-
-# Low-end hardware: lite model + frame skipping
+# Lite model for low-end hardware
 python main.py --complexity 0 --skip 2
+
+# Heavy model for max accuracy (GPU recommended)
+python main.py --complexity 2
 
 # Custom resolution
 python main.py --width 1920 --height 1080
@@ -115,48 +107,53 @@ python main.py --width 1920 --height 1080
 |-----|--------|
 | `q` | Quit |
 | `p` | Pause / Resume |
-| `r` | Reset round stats |
-| `+` / `=` | Increase frame skipping (more performance) |
-| `-` / `_` | Decrease frame skipping (more accuracy) |
+| `r` | Reset round |
+| `e` | Force CSV export checkpoint |
+| `+` / `=` | Increase frame skipping |
+| `-` / `_` | Decrease frame skipping |
+
+## Output
+
+CSV export files are saved to `exports/` in the project root. Each session produces:
+- `mma_fight_<timestamp>.csv` — live event log
+- `mma_summary_<timestamp>.csv` — aggregated match summary
 
 ## Architecture
 
 ```
 mma-fight-analyzer/
 ├── main.py                  Entry point
-├── requirements.txt         mediapipe, opencv-python, numpy
+├── requirements.txt
 ├── README.md
+├── models/                  MediaPipe models (auto-downloaded)
+│   └── pose_landmarker_lite.task
+├── exports/                 CSV match logs
 ├── src/
-│   ├── main.py              CLI, main loop, error recovery
-│   ├── pose_estimation.py   MediaPipe wrapper, 33-point landmark extraction
-│   ├── movement_analyzer.py Stance, guard, pressure, head movement (normalized)
-│   ├── strike_detector.py   Per-limb buffered velocity, trajectory classification
+│   ├── main.py              Main loop, CLI, error handling
+│   ├── pose_estimation.py   Multi-person MediaPipe PoseLandmarker
+│   ├── movement_analyzer.py Stance, guard, pressure, head movement
+│   ├── strike_detector.py   Per-limb buffered velocity analysis
+│   ├── takedown_detector.py Level change, clinch, ground control
 │   ├── scoring_engine.py    MMA round scoring
-│   ├── referee_ai.py        State machine: knockdown/standup/stalling detection
-│   ├── suggestion_engine.py Pattern-based real-time coaching
-│   └── visualizer.py        OpenCV HUD with metrics panel
+│   ├── referee_ai.py        Referee state machine
+│   ├── suggestion_engine.py Real-time coaching
+│   ├── round_manager.py     Fight timer, round progression
+│   ├── export_manager.py    CSV event logging
+│   └── visualizer.py        OpenCV HUD
 └── data/
-    └── sample/
 ```
-
-## Key Design Decisions
-
-- **Body scale normalization** via shoulder width per frame — thresholds are resolution-independent
-- **Separate limb buffers** — left/right wrists, ankles, elbows tracked independently
-- **Velocity over N-frame window** — 2-3 frame delta for smoothing, not single-frame diff
-- **State machine for knockdowns** — avoids false positives from bending over
-- **Cooldown per limb group** — prevents double-counting the same strike
-- **Frame skipping** — configurable via CLI or +/- keys at runtime
 
 ## Roadmap
 
 - [x] Single-fighter tracking
+- [x] Two-fighter tracking (MediaPipe PoseLandmarker)
 - [x] Body-scale normalized metrics
 - [x] Per-limb strike buffers
 - [x] Referee state machine
-- [x] Performance mode (frame skipping)
-- [ ] Two-fighter sparring tracking
-- [ ] Takedown/clinch detection
-- [ ] Automated round transitions
-- [ ] CSV match log export
-- [ ] Pre-recorded fight video analysis
+- [x] Takedown/clinch detection
+- [x] Automated round transitions
+- [x] CSV match log export
+- [x] Pre-recorded video analysis with progress bar
+- [ ] Lightweight ML model for strike classification (~30KB)
+- [ ] Real-time audio feedback (beep on knockdown)
+- [ ] Jab/cross speed measurement in mph
