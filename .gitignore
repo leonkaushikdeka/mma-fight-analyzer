@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+env/
+venv/
+*.mp4
+*.avi
+*.mov
+*.webm
+*.log
+data/sample/*
+!data/sample/.gitkeep
+test_output/
