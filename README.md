@@ -65,6 +65,10 @@ STANDING → (opponent close + hip drop >10%) → CLINCH
 - Webcam (for live) or video file (for replay analysis)
 - No internet during runtime
 
+## Demo
+
+![Running locally](screenshots/demo.png)
+
 ## Install
 
 ```bash
